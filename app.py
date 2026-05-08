@@ -211,9 +211,7 @@ with st.sidebar:
         "bottled/LP gas, fuel oil, or coal as primary heat source. "
         "Priority score = 0.6 × fossil% + 0.4 × normalized rate."
     )
-    st.divider()
-    st.markdown("Built by [IQSpatial](https://github.com/rmkenv) · "
-                "[GitHub](https://github.com/rmkenv/electrification)")
+    
 
 # ── Build choropleth ──────────────────────────────────────────────────────────
 def make_choropleth(df, layer):
