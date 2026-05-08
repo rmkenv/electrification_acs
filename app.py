@@ -1,4 +1,4 @@
-“””
+“
 Electrification Readiness Map — v2
 Data sources:
 
@@ -10,7 +10,7 @@ Data sources:
 - EIA Form 860: State renewable capacity factors (solar + wind)
 - NOAA CDO    : Heating degree days by state
 - DOE IRA     : Energy community eligibility (coal closure + unemployment)
-  “””
+  “
 
 import os
 import logging
