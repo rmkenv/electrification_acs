@@ -212,7 +212,7 @@ with st.sidebar:
         "Priority score = 0.6 × fossil% + 0.4 × normalized rate."
     )
     st.divider()
-    st.markdown("Built by [IQSpatial](https://github.com/rmkenv) · "
+    st.markdown("Built by [Ryan Kmetz](https://github.com/rmkenv) · "
                 "[GitHub](https://github.com/rmkenv/electrification)")
 
 # ── Build choropleth ──────────────────────────────────────────────────────────
