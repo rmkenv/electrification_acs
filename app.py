@@ -1,16 +1,4 @@
-“
-Electrification Readiness Map — v2
-Data sources:
 
-- ACS B25117  : Heating fuel by tenure
-- ACS B19013  : Median household income
-- ACS B25034  : Year structure built (housing vintage)
-- ACS B25040  : House heating fuel (2015 for trend comparison)
-- EIA retail  : Residential electricity rates ¢/kWh
-- EIA Form 860: State renewable capacity factors (solar + wind)
-- NOAA CDO    : Heating degree days by state
-- DOE IRA     : Energy community eligibility (coal closure + unemployment)
-  “
 
 import os
 import logging
