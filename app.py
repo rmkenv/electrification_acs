@@ -288,4 +288,467 @@ BIVARIATE_COLORS = {
     "Low fossil / Mid rate":   "#b3cde0",
     "Low fossil / High rate":  "#6497b1",
     "Mid fossil / Low rate":   "#f7e4b7",
-    "Mid fossil /
+    "Mid fossil / Mid rate":   "#d4a843",
+    "Mid fossil / High rate":  "#b5720a",
+    "High fossil / Low rate":  "#f0c4b4",
+    "High fossil / Mid rate":  "#e07b52",
+    "High fossil / High rate": "#c0392b",
+}
+
+LAYER_CONFIG = {
+    "🗺️ Bivariate (Readiness × Rate)": None,
+    "🔥 Fossil Heat %":          ("pct_fossil",          "% Fossil Heat",           "YlOrRd"),
+    "⚡ Electricity Rate ¢/kWh": ("rate_cents_kwh",       "¢/kWh",                   "OrRd"),
+    "💰 Energy Cost Burden %":   ("energy_burden_pct",    "Est. Energy Burden %",    "RdPu"),
+    "🏠 Pre-1980 Housing %":     ("pct_pre1980",          "% Units Built Pre-1980",  "YlOrBr"),
+    "♻️ Renewable Opportunity":  ("renewable_opportunity","Renewable Opportunity",   "Greens"),
+    "🔧 Retrofit Difficulty":    ("retrofit_difficulty",  "Retrofit Difficulty",     "Oranges"),
+    "🎯 Heat Pump ROI Score":    ("hp_roi_score",         "Heat Pump ROI Score",     "Blues"),
+    "🏆 Priority Score":         ("priority_score",       "Priority Score",          "Reds"),
+    "🌡️ Heating Degree Days":   ("hdd",                  "HDD (base 65°F)",         "PuBu"),
+    "📈 Median HH Income":       ("median_hh_income",     "Median HH Income ($)",    "BuGn"),
+}
+
+GEO_LAYOUT = dict(
+    geo=dict(
+        scope="usa",
+        showlakes=False,
+        bgcolor="#0d0f1a",
+        landcolor="#1a1d2e",
+        subunitcolor="#2a2d3e",
+    ),
+    paper_bgcolor="#0d0f1a",
+    plot_bgcolor="#0d0f1a",
+    font_color="#e8eaf0",
+    margin=dict(l=0, r=0, t=0, b=0),
+    height=520,
+)
+
+
+def make_choropleth(df: pd.DataFrame, layer: str) -> go.Figure:
+    if layer == "🗺️ Bivariate (Readiness × Rate)":
+        dfc = df.copy().reset_index(drop=True)
+        dfc["_color"] = dfc["bivariate_class"].map(BIVARIATE_COLORS).fillna("#888888")
+
+        def fmt(col, suffix="", decimals=1):
+            return dfc[col].apply(
+                lambda v: f"{v:.{decimals}f}{suffix}" if pd.notna(v) else "N/A"
+            )
+
+        dfc["_hover"] = (
+            "<b>" + dfc["NAME"] + "</b><br>"
+            + "Fossil heat: "      + fmt("pct_fossil", "%") + "<br>"
+            + "Electric heat: "    + fmt("pct_electric", "%") + "<br>"
+            + "Elec. rate: "       + fmt("rate_cents_kwh", "¢") + "<br>"
+            + "Energy burden: "    + fmt("energy_burden_pct", "%") + "<br>"
+            + "Median income: $"   + dfc["median_hh_income"].apply(
+                                         lambda v: f"{v:,.0f}" if pd.notna(v) else "N/A") + "<br>"
+            + "Pre-1980 housing: " + fmt("pct_pre1980", "%") + "<br>"
+            + "HDD: "              + fmt("hdd", "", 0) + "<br>"
+            + "Renewable CF: "     + fmt("renewable_cf", "", 2) + "<br>"
+            + "HP ROI score: "     + fmt("hp_roi_score") + "<br>"
+            + "IRA energy comm: "  + dfc["ira_energy_community"].map({True: "✓ Yes", False: "No"}) + "<br>"
+            + "Class: "            + dfc["bivariate_class"]
+        )
+
+        # FIX: Choropleth with custom per-state colors requires a dummy numeric z
+        # and a colorscale mapping each index to its hex color. Sort by index for
+        # stable colorscale → color assignment.
+        n = len(dfc)
+        colorscale = [
+            [i / max(n - 1, 1), dfc.loc[i, "_color"]]
+            for i in range(n)
+        ]
+        fig = go.Figure(go.Choropleth(
+            locations=dfc["state_abbr"],
+            z=list(range(n)),
+            locationmode="USA-states",
+            colorscale=colorscale,
+            showscale=False,
+            customdata=dfc["_hover"],
+            hovertemplate="%{customdata}<extra></extra>",  # FIX: use customdata not series
+            marker_line_color="#0d0f1a",
+            marker_line_width=0.8,
+        ))
+    else:
+        col, label, scale = LAYER_CONFIG[layer]
+        # FIX: hover_extra was incorrectly built — define fixed supplemental columns
+        extra_cols = {
+            c: True for c in ["pct_fossil", "rate_cents_kwh", "energy_burden_pct", "priority_score"]
+            if c != col and c in df.columns
+        }
+        fig = px.choropleth(
+            df,
+            locations="state_abbr",
+            locationmode="USA-states",
+            color=col,
+            color_continuous_scale=scale,
+            scope="usa",
+            hover_name="NAME",
+            hover_data={"state_abbr": False, col: True, **extra_cols},
+            labels={
+                col: label,
+                "pct_fossil": "Fossil %",
+                "rate_cents_kwh": "Rate ¢/kWh",
+                "energy_burden_pct": "Burden %",
+                "priority_score": "Priority",
+            },
+        )
+
+    fig.update_layout(**GEO_LAYOUT)
+    return fig
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN APP
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.title("⚡ Electrification Readiness Map")
+st.caption(
+    "ACS B25117 · B19013 · B25034 · EIA Retail Rates · NOAA HDD · "
+    "DOE IRA Energy Communities · State-level analysis"
+)
+
+df = build_master()
+
+if df.empty:
+    st.error("No data loaded — Census API unavailable. Check secrets or try again.")
+    st.stop()
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.header("Map Controls")
+    layer = st.radio("Color by", list(LAYER_CONFIG.keys()), index=0)
+
+    st.divider()
+    st.markdown("**Filter**")
+    show_ira_only = st.checkbox("IRA Energy Communities only", value=False)
+    min_fossil = st.slider("Min fossil heat %", 0, 80, 0, 5)
+
+    st.divider()
+    st.markdown("**Data sources**")
+    st.markdown(
+        "- [ACS 5-Year 2022](https://data.census.gov) B25117, B19013, B25034\n"
+        "- [EIA Retail Sales API](https://www.eia.gov/opendata/)\n"
+        "- [NOAA 30-yr Climate Normals](https://www.ncei.noaa.gov/products/land-based-station/us-climate-normals)\n"
+        "- [DOE IRA Energy Communities](https://energycommunities.gov/)\n"
+        "- [EIA Electric Power Annual](https://www.eia.gov/electricity/annual/)"
+    )
+    st.divider()
+    st.markdown("**Methodology**")
+    st.markdown(
+        "- **Fossil heat share**: gas + LP + fuel oil + coal as % of occupied units\n"
+        "- **Energy burden**: est. annual energy cost / median HH income\n"
+        "- **HP ROI score**: 40% fossil share + 35% elec rate + 25% HDD\n"
+        "- **Retrofit difficulty**: 50% pre-1980 housing + 50% normalized HDD\n"
+        "- **Renewable opportunity**: 60% state renewable CF + 40% fossil share\n"
+        "- **Priority score**: 60% fossil share + 40% normalized rate"
+    )
+    st.divider()
+    st.markdown("Built by [IQSpatial](https://github.com/rmkenv)")
+
+# ── Apply filters ─────────────────────────────────────────────────────────────
+
+dff = df.copy()
+if show_ira_only:
+    dff = dff[dff["ira_energy_community"]]
+dff = dff[dff["pct_fossil"] >= min_fossil]
+
+if dff.empty:
+    st.warning("No states match current filters.")
+    st.stop()
+
+# ── Map ───────────────────────────────────────────────────────────────────────
+
+fig = make_choropleth(dff, layer)
+st.plotly_chart(fig, use_container_width=True)
+
+# ── Bivariate legend ──────────────────────────────────────────────────────────
+
+if layer == "🗺️ Bivariate (Readiness × Rate)":
+    st.markdown("**Legend — Fossil Heat Share (rows) × Electricity Rate (columns)**")
+    order = [
+        ("High fossil / High rate", "High fossil\nHigh rate"),
+        ("High fossil / Mid rate",  "High fossil\nMid rate"),
+        ("High fossil / Low rate",  "High fossil\nLow rate"),
+        ("Mid fossil / High rate",  "Mid fossil\nHigh rate"),
+        ("Mid fossil / Mid rate",   "Mid fossil\nMid rate"),
+        ("Mid fossil / Low rate",   "Mid fossil\nLow rate"),
+        ("Low fossil / High rate",  "Low fossil\nHigh rate"),
+        ("Low fossil / Mid rate",   "Low fossil\nMid rate"),
+        ("Low fossil / Low rate",   "Low fossil\nLow rate"),
+    ]
+    cols = st.columns(9)
+    for i, (key, lbl) in enumerate(order):
+        c = BIVARIATE_COLORS.get(key, "#888")
+        cols[i].markdown(
+            f'<div style="background:{c};height:28px;border-radius:3px;margin-bottom:3px"></div>'
+            f'<div style="font-size:8px;color:#6b7280;white-space:pre-line">{lbl}</div>',
+            unsafe_allow_html=True,
+        )
+
+st.divider()
+
+# ── KPI row ───────────────────────────────────────────────────────────────────
+
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+
+k1.metric("States shown", len(dff))
+k1.metric("Avg fossil heat", f"{dff['pct_fossil'].mean():.1f}%")
+
+rate_ok   = dff["rate_cents_kwh"].notna().any()
+burden_ok = dff["energy_burden_pct"].notna().any()
+inc_ok    = dff["median_hh_income"].notna().any()
+pre_ok    = dff["pct_pre1980"].notna().any()
+ps_ok     = dff["priority_score"].notna().any()
+
+k2.metric("Avg elec rate",    f"{dff['rate_cents_kwh'].mean():.1f}¢" if rate_ok else "N/A")
+k2.metric("Avg energy burden", f"{dff['energy_burden_pct'].mean():.1f}%" if burden_ok else "N/A")
+k3.metric("Avg median income", f"${dff['median_hh_income'].mean()/1000:.0f}K" if inc_ok else "N/A")
+k3.metric("Avg HDD", f"{dff['hdd'].mean():.0f}")
+k4.metric("Avg pre-1980 housing", f"{dff['pct_pre1980'].mean():.1f}%" if pre_ok else "N/A")
+k4.metric("IRA energy communities", str(int(dff["ira_energy_community"].sum())))
+
+# FIX: nlargest on a filtered copy; avoid chained index mismatches
+top_priority_row = dff.dropna(subset=["priority_score"]).nlargest(1, "priority_score")
+top_burden_row   = dff.dropna(subset=["energy_burden_pct"]).nlargest(1, "energy_burden_pct")
+
+k5.metric("Top priority state",
+          top_priority_row["state_abbr"].iat[0] if (ps_ok and len(top_priority_row)) else "N/A")
+k5.metric("Highest burden state",
+          top_burden_row["state_abbr"].iat[0] if (burden_ok and len(top_burden_row)) else "N/A")
+
+k6.metric("Total housing units",  f"{dff['total_units'].sum()/1e6:.1f}M")
+k6.metric("Fossil-heated units",  f"{(dff['total_units'] * dff['pct_fossil'] / 100).sum()/1e6:.1f}M")
+
+st.divider()
+
+# ── Analysis tabs ─────────────────────────────────────────────────────────────
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 State Rankings",
+    "💰 Equity & Burden",
+    "🏠 Housing & Retrofit",
+    "♻️ Renewable Transition",
+    "🏛️ IRA / Policy",
+])
+
+with tab1:
+    st.subheader("State Rankings")
+    rank_by = st.selectbox("Rank by", [
+        "priority_score","pct_fossil","energy_burden_pct","hp_roi_score",
+        "retrofit_difficulty","renewable_opportunity","rate_cents_kwh",
+    ], format_func=lambda x: {
+        "priority_score":        "Priority Score",
+        "pct_fossil":            "Fossil Heat %",
+        "energy_burden_pct":     "Energy Burden %",
+        "hp_roi_score":          "Heat Pump ROI Score",
+        "retrofit_difficulty":   "Retrofit Difficulty",
+        "renewable_opportunity": "Renewable Opportunity",
+        "rate_cents_kwh":        "Electricity Rate",
+    }.get(x, x))
+
+    display_cols = [c for c in [
+        "NAME","state_abbr","pct_fossil","rate_cents_kwh","energy_burden_pct",
+        "median_hh_income","pct_pre1980","hdd","hp_roi_score",
+        "renewable_opportunity","retrofit_difficulty","priority_score",
+        "ira_energy_community",
+    ] if c in dff.columns]
+
+    ranked = (
+        dff.dropna(subset=[rank_by])
+           .nlargest(20, rank_by)[display_cols]
+           .rename(columns={
+               "NAME":"State","state_abbr":"Abbr","pct_fossil":"Fossil %",
+               "rate_cents_kwh":"Rate ¢","energy_burden_pct":"Burden %",
+               "median_hh_income":"Med Income","pct_pre1980":"Pre-1980 %",
+               "hdd":"HDD","hp_roi_score":"HP ROI","renewable_opportunity":"Renew Opp",
+               "retrofit_difficulty":"Retrofit Diff","priority_score":"Priority",
+               "ira_energy_community":"IRA Comm",
+           })
+           .reset_index(drop=True)
+    )
+    # FIX: width='stretch' is not a valid Streamlit arg — use use_container_width
+    st.dataframe(ranked, use_container_width=True, height=500)
+
+with tab2:
+    st.subheader("Equity & Energy Burden")
+    c1, c2 = st.columns(2)
+    with c1:
+        if burden_ok and inc_ok:
+            fig_scatter = px.scatter(
+                dff.dropna(subset=["energy_burden_pct","median_hh_income"]),
+                x="median_hh_income", y="energy_burden_pct",
+                size="total_units", color="pct_fossil",
+                hover_name="NAME", text="state_abbr",
+                color_continuous_scale="YlOrRd",
+                labels={
+                    "median_hh_income":  "Median HH Income ($)",
+                    "energy_burden_pct": "Est. Energy Burden %",
+                    "pct_fossil":        "Fossil %",
+                },
+                title="Income vs Energy Burden (bubble = housing units)",
+            )
+            fig_scatter.update_traces(textposition="top center", textfont_size=8)
+            fig_scatter.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                                      font_color="#e8eaf0", height=380)
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("Income or burden data unavailable.")
+    with c2:
+        if burden_ok:
+            top_b = dff.nlargest(15, "energy_burden_pct")[
+                ["NAME","energy_burden_pct","median_hh_income","pct_fossil","rate_cents_kwh"]
+            ].rename(columns={
+                "NAME":"State","energy_burden_pct":"Burden %",
+                "median_hh_income":"Income","pct_fossil":"Fossil %","rate_cents_kwh":"Rate ¢",
+            })
+            fig_bar = px.bar(
+                top_b, x="Burden %", y="State", orientation="h",
+                color="Burden %", color_continuous_scale="RdPu",
+                title="Top 15 States by Energy Burden",
+            )
+            fig_bar.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                                  font_color="#e8eaf0", height=380,
+                                  yaxis={"categoryorder":"total ascending"})
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("Burden data requires EIA API key.")
+
+with tab3:
+    st.subheader("Housing Vintage & Retrofit Challenge")
+    c1, c2 = st.columns(2)
+    with c1:
+        if pre_ok:
+            fig_v = px.scatter(
+                dff.dropna(subset=["pct_pre1980","hdd"]),
+                x="hdd", y="pct_pre1980",
+                size="total_units", color="retrofit_difficulty",
+                hover_name="NAME", text="state_abbr",
+                color_continuous_scale="Oranges",
+                labels={
+                    "hdd":               "Heating Degree Days",
+                    "pct_pre1980":       "% Units Built Pre-1980",
+                    "retrofit_difficulty":"Retrofit Difficulty",
+                },
+                title="HDD vs Pre-1980 Housing (retrofit challenge)",
+            )
+            fig_v.update_traces(textposition="top center", textfont_size=8)
+            fig_v.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                                font_color="#e8eaf0", height=380)
+            st.plotly_chart(fig_v, use_container_width=True)
+        else:
+            st.info("Housing vintage data unavailable.")
+    with c2:
+        if pre_ok:
+            fig_d = px.bar(
+                dff.nlargest(15,"retrofit_difficulty")[["NAME","retrofit_difficulty","pct_pre1980","hdd"]],
+                x="retrofit_difficulty", y="NAME", orientation="h",
+                color="retrofit_difficulty", color_continuous_scale="Oranges",
+                labels={"retrofit_difficulty":"Retrofit Difficulty","NAME":"State"},
+                title="Top 15 States by Retrofit Difficulty",
+            )
+            fig_d.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                                font_color="#e8eaf0", height=380,
+                                yaxis={"categoryorder":"total ascending"})
+            st.plotly_chart(fig_d, use_container_width=True)
+        else:
+            st.info("Housing vintage data unavailable.")
+
+with tab4:
+    st.subheader("Renewable Transition Opportunity")
+    c1, c2 = st.columns(2)
+    with c1:
+        fig_r = px.scatter(
+            dff.dropna(subset=["renewable_cf","pct_fossil"]),
+            x="renewable_cf", y="pct_fossil",
+            size="total_units", color="renewable_opportunity",
+            hover_name="NAME", text="state_abbr",
+            color_continuous_scale="Greens",
+            labels={
+                "renewable_cf":          "State Renewable Capacity Factor",
+                "pct_fossil":            "Fossil Heat Share %",
+                "renewable_opportunity": "Opportunity Score",
+            },
+            title="Renewable CF vs Fossil Heat (top-right = best transition case)",
+        )
+        fig_r.update_traces(textposition="top center", textfont_size=8)
+        fig_r.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                            font_color="#e8eaf0", height=380)
+        st.plotly_chart(fig_r, use_container_width=True)
+    with c2:
+        fig_roi = px.scatter(
+            dff.dropna(subset=["hp_roi_score","rate_cents_kwh"]),
+            x="hdd", y="rate_cents_kwh",
+            size="pct_fossil", color="hp_roi_score",
+            hover_name="NAME", text="state_abbr",
+            color_continuous_scale="Blues",
+            labels={
+                "hdd":           "Heating Degree Days",
+                "rate_cents_kwh":"Electricity Rate ¢/kWh",
+                "hp_roi_score":  "HP ROI Score",
+                "pct_fossil":    "Fossil %",
+            },
+            title="HDD vs Rate — Heat Pump ROI (bubble = fossil share)",
+        )
+        fig_roi.update_traces(textposition="top center", textfont_size=8)
+        fig_roi.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                              font_color="#e8eaf0", height=380)
+        st.plotly_chart(fig_roi, use_container_width=True)
+
+with tab5:
+    st.subheader("IRA Energy Communities & Policy Signals")
+    ira_df  = dff[dff["ira_energy_community"]].copy()
+    non_ira = dff[~dff["ira_energy_community"]].copy()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("IRA Energy Community states", len(ira_df))
+    c2.metric("Avg fossil heat (IRA states)",
+              f"{ira_df['pct_fossil'].mean():.1f}%" if len(ira_df) else "N/A")
+    c3.metric("Fossil-heated units in IRA states",
+              f"{(ira_df['total_units'] * ira_df['pct_fossil'] / 100).sum()/1e6:.1f}M"
+              if len(ira_df) else "N/A")
+
+    st.markdown(
+        "States marked as **IRA Energy Communities** qualify for an additional **10% investment "
+        "tax credit adder** on clean energy projects under the Inflation Reduction Act. "
+        "These are areas with coal mine/plant closures or high fossil-fuel employment."
+    )
+
+    if len(ira_df):
+        fig_ira = px.bar(
+            ira_df.sort_values("priority_score", ascending=False)[
+                ["NAME","priority_score","pct_fossil","rate_cents_kwh","energy_burden_pct"]
+            ].rename(columns={
+                "NAME":"State","priority_score":"Priority",
+                "pct_fossil":"Fossil %","rate_cents_kwh":"Rate ¢",
+                "energy_burden_pct":"Burden %",
+            }),
+            x="State", y="Priority",
+            color="Fossil %", color_continuous_scale="Reds",
+            title="IRA Energy Community States — Priority Score",
+        )
+        fig_ira.update_layout(paper_bgcolor="#0d0f1a", plot_bgcolor="#111320",
+                              font_color="#e8eaf0", height=360)
+        st.plotly_chart(fig_ira, use_container_width=True)
+
+    st.divider()
+    st.markdown("**All states — full data table**")
+    full_cols = {
+        "NAME":"State","state_abbr":"Abbr","pct_fossil":"Fossil %",
+        "pct_electric":"Electric %","rate_cents_kwh":"Rate ¢/kWh",
+        "energy_burden_pct":"Burden %","median_hh_income":"Med Income",
+        "pct_pre1980":"Pre-1980 %","hdd":"HDD","renewable_cf":"Renew CF",
+        "hp_roi_score":"HP ROI","retrofit_difficulty":"Retrofit Diff",
+        "renewable_opportunity":"Renew Opp","priority_score":"Priority",
+        "ira_energy_community":"IRA Comm","total_units":"Total Units",
+    }
+    show_df = (
+        dff[[c for c in full_cols if c in dff.columns]]
+        .rename(columns=full_cols)
+        .sort_values("Priority", ascending=False)
+        .reset_index(drop=True)
+    )
+    # FIX: width='stretch' is not a valid arg — use use_container_width
+    st.dataframe(show_df, use_container_width=True, height=420)
