@@ -211,7 +211,9 @@ with st.sidebar:
         "bottled/LP gas, fuel oil, or coal as primary heat source. "
         "Priority score = 0.6 × fossil% + 0.4 × normalized rate."
     )
-    
+    st.divider()
+    st.markdown("Built by [IQSpatial](https://github.com/rmkenv) · "
+                "[GitHub](https://github.com/rmkenv/electrification)")
 
 # ── Build choropleth ──────────────────────────────────────────────────────────
 def make_choropleth(df, layer):
@@ -288,7 +290,7 @@ def make_choropleth(df, layer):
 
 
 fig = make_choropleth(df, layer)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # ── Bivariate legend ──────────────────────────────────────────────────────────
 if layer == "Bivariate (Readiness × Rate)":
@@ -318,13 +320,12 @@ st.divider()
 # ── Summary stats ─────────────────────────────────────────────────────────────
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Avg Fossil Heat Share", f"{df['pct_fossil'].mean():.1f}%")
-col2.metric("Avg Electricity Rate",  f"{df['rate_cents_kwh'].mean():.1f}¢/kWh"
-            if "rate_cents_kwh" in df.columns else "N/A")
-col3.metric("Highest Priority State",
-            df.loc[df["priority_score"].idxmax(), "state_abbr"]
-            if "priority_score" in df.columns else "N/A")
-col4.metric("Total Housing Units",
-            f"{df['total_units'].sum()/1e6:.1f}M")
+rate_val = df["rate_cents_kwh"].mean() if "rate_cents_kwh" in df.columns and df["rate_cents_kwh"].notna().any() else None
+col2.metric("Avg Electricity Rate", f"{rate_val:.1f}¢/kWh" if rate_val else "N/A")
+ps = df["priority_score"] if "priority_score" in df.columns else None
+top_state = df.loc[ps.dropna().idxmax(), "state_abbr"] if ps is not None and ps.notna().any() else "N/A"
+col3.metric("Highest Priority State", top_state)
+col4.metric("Total Housing Units", f"{df['total_units'].sum()/1e6:.1f}M")
 
 st.divider()
 
@@ -343,15 +344,18 @@ with st.expander("📊 Full state data table"):
     }
     show = df[[c for c in display_cols if c in df.columns]].rename(columns=display_cols)
     show = show.sort_values("Priority Score", ascending=False).reset_index(drop=True)
-    st.dataframe(show, use_container_width=True, height=400)
+    st.dataframe(show, width='stretch', height=400)
 
 # ── Top 10 highest priority ───────────────────────────────────────────────────
 with st.expander("🔴 Top 10 highest priority states"):
-    top10 = df.nlargest(10, "priority_score")[
-        ["NAME", "pct_fossil", "rate_cents_kwh", "priority_score", "bivariate_class"]
-    ].rename(columns={
-        "NAME": "State", "pct_fossil": "Fossil %",
-        "rate_cents_kwh": "Rate ¢/kWh", "priority_score": "Priority",
-        "bivariate_class": "Class",
-    }).reset_index(drop=True)
-    st.dataframe(top10, use_container_width=True)
+    if "priority_score" in df.columns and df["priority_score"].notna().any():
+        top10 = df.nlargest(10, "priority_score")[
+            [c for c in ["NAME", "pct_fossil", "rate_cents_kwh", "priority_score", "bivariate_class"] if c in df.columns]
+        ].rename(columns={
+            "NAME": "State", "pct_fossil": "Fossil %",
+            "rate_cents_kwh": "Rate ¢/kWh", "priority_score": "Priority",
+            "bivariate_class": "Class",
+        }).reset_index(drop=True)
+        st.dataframe(top10, width='stretch')
+    else:
+        st.info("Priority scores require both Census and EIA API keys. Add them in Streamlit secrets.")
