@@ -83,34 +83,44 @@ ABBR_TO_NAME = {v: k for k, v in {
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_acs() -> pd.DataFrame:
     vars_str = ",".join(["NAME"] + B25117_VARS)
-    url = (
-        f"https://api.census.gov/data/{ACS_YEAR}/acs/acs5"
-        f"?get={vars_str}&for=state:*"
-        + (f"&key={CENSUS_API_KEY}" if CENSUS_API_KEY else "")
-    )
-    try:
-        r = requests.get(url, timeout=45)
-        r.raise_for_status()
-        rows = r.json()
-        df = pd.DataFrame(rows[1:], columns=rows[0])
-        for v in B25117_VARS:
-            df[v] = pd.to_numeric(df[v], errors="coerce").fillna(0).clip(lower=0)
-        df["state_abbr"] = df["state"].map(FIPS_TO_ABBR)
-        df = df.dropna(subset=["state_abbr"])
+    base_url = f"https://api.census.gov/data/{ACS_YEAR}/acs/acs5?get={vars_str}&for=state:*"
+    # Try with key first, then without (Census unauthenticated works but may rate-limit)
+    key = CENSUS_API_KEY.strip() if CENSUS_API_KEY else ""
+    urls = ([base_url + f"&key={key}", base_url] if key else [base_url])
 
-        total = df["B25117_001E"]
-        fossil = df["B25117_003E"] + df["B25117_004E"] + df["B25117_006E"] + df["B25117_007E"]
-        df["pct_fossil"]   = (fossil   / total * 100).round(1)
-        df["pct_electric"] = (df["B25117_005E"] / total * 100).round(1)
-        df["pct_gas"]      = (df["B25117_003E"] / total * 100).round(1)
-        df["pct_fuel_oil"] = (df["B25117_006E"] / total * 100).round(1)
-        df["pct_wood"]     = (df["B25117_008E"] / total * 100).round(1)
-        df["total_units"]  = total.astype(int)
-        return df[["NAME","state","state_abbr","total_units",
-                   "pct_fossil","pct_electric","pct_gas","pct_fuel_oil","pct_wood"]]
-    except Exception as e:
-        st.error(f"Census API error: {e}")
-        return pd.DataFrame()
+    last_err = None
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=45)
+            # Census returns 200 with HTML error page when key is bad — check content-type
+            if "text/html" in r.headers.get("Content-Type", ""):
+                last_err = "Census returned HTML (bad/missing key) — retrying without key"
+                continue
+            r.raise_for_status()
+            rows = r.json()
+            if not rows or len(rows) < 2:
+                last_err = "Census returned empty data"
+                continue
+            df = pd.DataFrame(rows[1:], columns=rows[0])
+            for v in B25117_VARS:
+                df[v] = pd.to_numeric(df[v], errors="coerce").fillna(0).clip(lower=0)
+            df["state_abbr"] = df["state"].map(FIPS_TO_ABBR)
+            df = df.dropna(subset=["state_abbr"])
+            total = df["B25117_001E"]
+            fossil = df["B25117_003E"] + df["B25117_004E"] + df["B25117_006E"] + df["B25117_007E"]
+            df["pct_fossil"]   = (fossil   / total * 100).round(1)
+            df["pct_electric"] = (df["B25117_005E"] / total * 100).round(1)
+            df["pct_gas"]      = (df["B25117_003E"] / total * 100).round(1)
+            df["pct_fuel_oil"] = (df["B25117_006E"] / total * 100).round(1)
+            df["pct_wood"]     = (df["B25117_008E"] / total * 100).round(1)
+            df["total_units"]  = total.astype(int)
+            return df[["NAME","state","state_abbr","total_units",
+                       "pct_fossil","pct_electric","pct_gas","pct_fuel_oil","pct_wood"]]
+        except Exception as e:
+            last_err = str(e)
+            continue
+    st.error(f"Census API failed: {last_err}")
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -212,7 +222,7 @@ with st.sidebar:
         "Priority score = 0.6 × fossil% + 0.4 × normalized rate."
     )
     st.divider()
-    st.markdown("Built by [Ryan Kmetz](https://github.com/rmkenv) · "
+    st.markdown("Built by [IQSpatial](https://github.com/rmkenv) · "
                 "[GitHub](https://github.com/rmkenv/electrification)")
 
 # ── Build choropleth ──────────────────────────────────────────────────────────
